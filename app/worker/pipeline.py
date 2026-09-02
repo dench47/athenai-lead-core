@@ -15,7 +15,12 @@ from sqlalchemy.orm import Session
 from app.enums import CaseStatus, Urgency
 from app.models import AuditLog, LeadCase, Qualification
 from app.pii import mask_text
-from app.providers import QualificationInvalidError, QualificationProvider, get_qualifier
+from app.providers import (
+    ProviderUnavailableError,
+    QualificationInvalidError,
+    QualificationProvider,
+    get_qualifier,
+)
 from app.schemas import LeadForQualification, QualificationResult
 
 log = structlog.get_logger("pipeline")
@@ -36,7 +41,7 @@ def run_once(
     if provider is None:
         provider = get_qualifier()
 
-    stats = {"claimed": 0, "qualified": 0, "manual_review": 0, "errors": 0}
+    stats = {"claimed": 0, "qualified": 0, "manual_review": 0, "postponed": 0, "errors": 0}
     cases = (
         session.execute(
             select(LeadCase)
@@ -53,6 +58,12 @@ def run_once(
     for case in cases:
         try:
             outcome = _qualify_case(session, case, provider)
+        except ProviderUnavailableError:
+            # API недоступен: кейс остаётся в new и будет повторён.
+            session.rollback()
+            stats["postponed"] += 1
+            log.warning("qualification_postponed", case_id=str(case.id))
+            continue
         except Exception:
             session.rollback()
             stats["errors"] += 1

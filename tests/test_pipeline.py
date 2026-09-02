@@ -6,6 +6,7 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.enums import CaseStatus, Urgency
 from app.models import LeadCase, Qualification
+from app.providers.base import ProviderUnavailableError
 from app.schemas import LeadForQualification, QualificationResult
 from app.worker.pipeline import run_once
 
@@ -75,7 +76,13 @@ def test_pipeline_qualifies_new_case(client) -> None:
     with SessionLocal() as session:
         stats = run_once(session)
 
-    assert stats == {"claimed": 1, "qualified": 1, "manual_review": 0, "errors": 0}
+    assert stats == {
+        "claimed": 1,
+        "qualified": 1,
+        "manual_review": 0,
+        "postponed": 0,
+        "errors": 0,
+    }
     case = _single_case()
     assert case.status == CaseStatus.QUALIFIED
     assert case.follow_up_due_at is not None
@@ -118,3 +125,24 @@ def test_opt_out_cases_are_never_claimed(client) -> None:
     assert stats["claimed"] == 0
     case = _single_case()
     assert case.status == CaseStatus.OPT_OUT
+
+
+class _UnavailableStubProvider:
+    """Имитация LLM-API, который лежит (429/таймаут после всех повторов)."""
+
+    name = "stub-unavailable"
+
+    def qualify(self, lead: LeadForQualification) -> QualificationResult:
+        raise ProviderUnavailableError("DeepSeek недоступен")
+
+
+def test_unavailable_provider_postpones_case(client) -> None:
+    """API недоступен -> кейс остаётся в new и будет повторён позже,
+    а не уходит на ручную проверку (вины модели нет)."""
+    _create_case_via_webhook(client, update_id=6005)
+    with SessionLocal() as session:
+        stats = run_once(session, provider=_UnavailableStubProvider())
+
+    assert stats["postponed"] == 1
+    case = _single_case()
+    assert case.status == CaseStatus.NEW
