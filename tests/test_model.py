@@ -35,15 +35,26 @@ def test_case_statuses_cover_assignment_pipeline() -> None:
 
 
 def test_unique_constraints_protect_against_duplicates() -> None:
-    """Дубль события должен ломать INSERT, а не создавать вторую карточку."""
-    for table_name in ("lead_events", "lead_cases"):
-        table = models.Base.metadata.tables[table_name]
-        uq_columns = {
-            tuple(uq.columns.keys())
-            for uq in table.constraints
-            if isinstance(uq, UniqueConstraint)
-        }
-        assert ("tenant_id", "external_event_id") in uq_columns, table_name
+    """Дубль события должен ломать INSERT карточки, а не создавать вторую.
+
+    Журнал lead_events, наоборот, хранит все попытки (включая повторы) —
+    уникальности там быть не должно.
+    """
+    cases = models.Base.metadata.tables["lead_cases"]
+    uq_columns = {
+        tuple(uq.columns.keys())
+        for uq in cases.constraints
+        if isinstance(uq, UniqueConstraint)
+    }
+    assert ("tenant_id", "external_event_id") in uq_columns
+
+    events = models.Base.metadata.tables["lead_events"]
+    events_uq = {
+        tuple(uq.columns.keys())
+        for uq in events.constraints
+        if isinstance(uq, UniqueConstraint)
+    }
+    assert ("tenant_id", "external_event_id") not in events_uq
 
 
 def test_crm_sync_idempotency_key_is_unique() -> None:

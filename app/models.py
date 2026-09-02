@@ -99,15 +99,14 @@ class Tenant(TimestampMixin, Base):
 
 
 class LeadEvent(Base):
-    """Сырой журнал входящих событий: что пришло, от кого и чем закончилось."""
+    """Сырой журнал входящих событий: что пришло, от кого и чем закончилось.
+
+    Журнал хранит ВСЕ попытки доставки, включая повторы (outcome=duplicate) —
+    разница между «получено событий» и «уникальных лидов» и есть метрика
+    дублей. Защита от дублей карточек — UNIQUE на lead_cases, не здесь.
+    """
 
     __tablename__ = "lead_events"
-    # Имена ограничений уникальны во всей схеме БД, поэтому включаем имя таблицы
-    __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "external_event_id", name="uq_lead_events_external_event_id"
-        ),
-    )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(

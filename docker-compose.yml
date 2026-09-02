@@ -21,6 +21,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-athenai}
     volumes:
       - pgdata:/var/lib/postgresql/data
+      - ./docker/initdb:/docker-entrypoint-initdb.d:ro
     ports:
       - "5433:5432"  # доступ с хоста для разработки/psql (для запуска не нужен)
     healthcheck:

@@ -3,6 +3,10 @@
 from fastapi import FastAPI
 
 from app import __version__
+from app.api import cases, webhooks
+from app.logging_setup import configure_logging
+
+configure_logging("api")
 
 
 def create_app() -> FastAPI:
@@ -10,6 +14,8 @@ def create_app() -> FastAPI:
         title="ATHENAI Lead Recovery & Sales CRM Core",
         version=__version__,
     )
+    app.include_router(webhooks.router)
+    app.include_router(cases.router)
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
