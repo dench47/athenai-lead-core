@@ -1,0 +1,18 @@
+# --- Секреты: НИКОГДА не коммитим ---
+.env
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+.venv/
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/
+
+# --- IDE / сервисное ---
+.idea/
+.mimosa/
+.DS_Store
+.zcode/

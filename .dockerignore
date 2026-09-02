@@ -1,0 +1,13 @@
+# .env с реальными ключами не должен попадать даже в слои docker-образа
+.env
+.git
+.venv
+.idea
+.mimosa
+__pycache__
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+build/
+dist/
+*.egg-info/

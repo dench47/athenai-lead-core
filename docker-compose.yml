@@ -1,0 +1,92 @@
+# Одна команда полного запуска: docker compose up --build
+#
+# Сервисы:
+#   db       — PostgreSQL 16 (единое хранилище: лиды, статусы, очередь задач)
+#   api      — REST API: вебхуки, approval, аналитика, дашборд
+#   worker   — фоновый конвейер: квалификация -> черновик -> CRM-синк
+#   mock-crm — игрушечная «внешняя» CRM со своими данными и режимами отказа
+#
+# Все переменные имеют безопасные значения по умолчанию: проект полностью
+# работает и без файла .env (см. .env.example).
+
+name: athenai-lead-core
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-athenai}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-athenai_dev}
+      POSTGRES_DB: ${POSTGRES_DB:-athenai}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment: &app_env
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-athenai}:${POSTGRES_PASSWORD:-athenai_dev}@db:5432/${POSTGRES_DB:-athenai}
+      MOCK_CRM_URL: http://mock-crm:8000
+      MOCK_CRM_TOKEN: ${MOCK_CRM_TOKEN:-dev-crm-token}
+      QUALIFIER_PROVIDER: ${QUALIFIER_PROVIDER:-mock}
+      DEEPSEEK_API_KEY: ${DEEPSEEK_API_KEY:-}
+      DEEPSEEK_BASE_URL: ${DEEPSEEK_BASE_URL:-https://api.deepseek.com}
+      DEEPSEEK_MODEL: ${DEEPSEEK_MODEL:-deepseek-chat}
+      DEEPSEEK_TIMEOUT_SECONDS: ${DEEPSEEK_TIMEOUT_SECONDS:-30}
+      WEBHOOK_TOKEN_TELEGRAM: ${WEBHOOK_TOKEN_TELEGRAM:-dev-token-telegram}
+      WEBHOOK_TOKEN_WEBSITE: ${WEBHOOK_TOKEN_WEBSITE:-dev-token-website}
+      WEBHOOK_TOKEN_AVITO: ${WEBHOOK_TOKEN_AVITO:-dev-token-avito}
+      ADMIN_TOKEN: ${ADMIN_TOKEN:-dev-admin-token}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-2}
+      CRM_RETRY_MAX_ATTEMPTS: ${CRM_RETRY_MAX_ATTEMPTS:-5}
+      CRM_BACKOFF_BASE_SECONDS: ${CRM_BACKOFF_BASE_SECONDS:-1}
+      CRM_BACKOFF_MAX_SECONDS: ${CRM_BACKOFF_MAX_SECONDS:-60}
+      LLM_MAX_ATTEMPTS: ${LLM_MAX_ATTEMPTS:-2}
+    ports:
+      - "8080:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 10s
+
+  worker:
+    build: .
+    restart: unless-stopped
+    command: python -m app.worker.main
+    environment: *app_env
+    depends_on:
+      db:
+        condition: service_healthy
+
+  mock-crm:
+    build: .
+    restart: unless-stopped
+    command: uvicorn mock_crm.main:app --host 0.0.0.0 --port 8000
+    environment:
+      MOCK_CRM_TOKEN: ${MOCK_CRM_TOKEN:-dev-crm-token}
+      MOCK_CRM_STORE: /var/lib/mockcrm/store.json
+    volumes:
+      - crmdata:/var/lib/mockcrm
+    ports:
+      - "8081:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/healthz', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 5s
+
+volumes:
+  pgdata:
+  crmdata:
