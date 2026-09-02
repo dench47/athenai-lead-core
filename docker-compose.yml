@@ -21,6 +21,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-athenai}
     volumes:
       - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"  # доступ с хоста для разработки/psql (для запуска не нужен)
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 3s
@@ -30,6 +32,11 @@ services:
   api:
     build: .
     restart: unless-stopped
+    # Перед стартом применяем миграции — «одна команда» у проверяющего
+    # разворачивает и схему, и сервисы.
+    command: >
+      sh -c "alembic upgrade head &&
+             uvicorn app.api.main:app --host 0.0.0.0 --port 8000"
     environment: &app_env
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-athenai}:${POSTGRES_PASSWORD:-athenai_dev}@db:5432/${POSTGRES_DB:-athenai}
       MOCK_CRM_URL: http://mock-crm:8000
