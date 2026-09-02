@@ -1,16 +1,18 @@
-"""Точка входа воркера: фоновый конвейер обработки лидов."""
+"""Точка входа воркера: фоновый цикл конвейера обработки лидов."""
 
 import time
 
 import structlog
 
 from app.config import get_settings
+from app.db import SessionLocal
 from app.logging_setup import configure_logging
+from app.worker.pipeline import run_once
 
 configure_logging("worker")
 log = structlog.get_logger("worker")
 
-HEARTBEAT_EVERY_N_LOOPS = 15
+HEARTBEAT_EVERY_N_LOOPS = 30
 
 
 def main() -> None:
@@ -19,7 +21,14 @@ def main() -> None:
 
     loop_count = 0
     while True:
-        # TODO: конвейер обработки (квалификация -> черновик -> CRM-синк).
+        try:
+            with SessionLocal() as session:
+                stats = run_once(session)
+            if stats["claimed"]:
+                log.info("pipeline_batch_done", **stats)
+        except Exception:
+            log.exception("worker_loop_failed")
+
         loop_count += 1
         if loop_count % HEARTBEAT_EVERY_N_LOOPS == 0:
             log.info("worker_heartbeat", loops=loop_count)

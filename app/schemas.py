@@ -5,10 +5,11 @@ payload, который фиксируется в журнале, а не то, 
 """
 
 from datetime import datetime
+from decimal import Decimal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.enums import ConsentStatus, LeadSource
+from app.enums import ConsentStatus, LeadSource, Urgency
 
 
 class StrictModel(BaseModel):
@@ -86,3 +87,34 @@ class IngestResponse(BaseModel):
     status: str  # accepted | duplicate
     case_id: str | None = None
     external_event_id: str | None = None
+
+
+# --- Квалификация ---
+
+
+class LeadForQualification(StrictModel):
+    """Данные, которые видит провайдер квалификации (mock или LLM).
+
+    PII исключены полностью: текст приходит маскированным, полей телефона
+    и e-mail здесь нет вообще — они не могут «случайно» уйти в модель.
+    """
+
+    source: LeadSource
+    body_text_masked: str
+
+
+class QualificationResult(StrictModel):
+    """Единый контракт результата: mock и DeepSeek возвращают одно и то же.
+
+    budget заполняется только при budget_explicit=True — модель не имеет
+    права «додумывать» сумму, которую клиент не называл.
+    """
+
+    need: str
+    urgency: Urgency
+    budget: Decimal | None = None
+    budget_explicit: bool = False
+    quality_score: int = Field(ge=0, le=100)
+    reasons: list[str] = Field(min_length=1)
+    confidence: float = Field(ge=0.0, le=1.0)
+    manual_review: bool = False
