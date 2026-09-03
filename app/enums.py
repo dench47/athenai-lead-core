@@ -38,6 +38,7 @@ class CaseStatus(StrEnum):
     MANUAL_REVIEW = "manual_review"
     OPT_OUT = "opt_out"
     DEAD_LETTER = "dead_letter"
+    REJECTED = "rejected"
 
 
 class Urgency(StrEnum):

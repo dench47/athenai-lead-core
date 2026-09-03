@@ -31,7 +31,17 @@ def test_case_statuses_cover_assignment_pipeline() -> None:
         "crm_synced",
     ]
     assert [CaseStatus(s).value for s in chain] == chain
-    assert {"manual_review", "opt_out", "dead_letter"} <= {s.value for s in CaseStatus}
+    assert {"manual_review", "opt_out", "dead_letter", "rejected"} <= {
+        s.value for s in CaseStatus
+    }
+
+
+def test_enum_columns_stored_as_varchar() -> None:
+    """Перечисления хранятся как VARCHAR: новое значение статуса
+    добавляется кодом, без миграций схемы."""
+    table = models.Base.metadata.tables["lead_cases"]
+    assert isinstance(table.columns["status"].type, sqlalchemy.Enum)
+    assert table.columns["status"].type.native_enum is False
 
 
 def test_unique_constraints_protect_against_duplicates() -> None:
