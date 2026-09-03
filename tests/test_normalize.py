@@ -1,5 +1,7 @@
 """Юнит-тесты нормализации трёх источников."""
 
+import time
+
 from app.enums import ConsentStatus, LeadSource
 from app.normalize import (
     detect_opt_out,
@@ -35,6 +37,21 @@ def test_telegram_normalizes_fields() -> None:
     assert lead.external_event_id == "tg-100"
     assert lead.contact_name == "Иван"
     assert lead.consent_status == ConsentStatus.UNKNOWN
+
+
+def test_telegram_without_date_uses_current_time() -> None:
+    """Источник не прислал время — берём текущее (не 1970-й и не прошлое)."""
+    update = TelegramUpdate(
+        update_id=101,
+        message=TelegramMessage(
+            message_id=1,
+            date=None,
+            **{"from": TelegramFrom(id=1, first_name="Без Даты")},
+            text="Нужна уборка офиса",
+        ),
+    )
+    lead = normalize_telegram(update)
+    assert abs(lead.received_at.timestamp() - time.time()) < 60
 
 
 def test_telegram_opt_out_words_set_consent() -> None:

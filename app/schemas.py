@@ -27,7 +27,7 @@ class TelegramFrom(StrictModel):
 
 class TelegramMessage(StrictModel):
     message_id: int
-    date: int  # unix time
+    date: int | None = None  # unix time; нет — берём текущее время
     from_: TelegramFrom = Field(alias="from")
     text: str = Field(min_length=1, max_length=4000)
 

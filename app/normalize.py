@@ -33,10 +33,15 @@ def detect_opt_out(text: str) -> bool:
 
 def normalize_telegram(update: TelegramUpdate) -> NormalizedLead:
     msg = update.message
+    received_at = (
+        datetime.fromtimestamp(msg.date, tz=UTC)
+        if msg.date is not None
+        else datetime.now(tz=UTC)
+    )
     return NormalizedLead(
         source=LeadSource.TELEGRAM,
         external_event_id=f"tg-{update.update_id}",
-        received_at=datetime.fromtimestamp(msg.date, tz=UTC),
+        received_at=received_at,
         contact_name=msg.from_.first_name or msg.from_.username,
         body_text=msg.text,
         consent_status=_text_consent(msg.text),

@@ -29,7 +29,6 @@ _TELEGRAM_DOCS = {
                     "update_id": 123456,
                     "message": {
                         "message_id": 42,
-                        "date": 1756800000,
                         "from": {"id": 9001, "first_name": "Иван"},
                         "text": "Срочно нужна уборка офиса 100 м2",
                     },

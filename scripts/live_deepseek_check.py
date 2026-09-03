@@ -58,4 +58,4 @@ print("\n=== ЧЕРНОВИК ОТ ЖИВОЙ МОДЕЛИ ===")
 print(draft.model_dump_json(indent=2, ensure_ascii=False))
 
 violations = check_draft(draft)
-print("\nGuardrails:", "чист — нарушений нет" if not violations else violations)
+print("\nGuardrails:", violations if violations else "чист — нарушений нет")
