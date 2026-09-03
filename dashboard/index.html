@@ -19,6 +19,9 @@
   h1 { font-size: 18px; font-weight: 600; }
   h1 span { color: var(--accent); }
   .spacer { flex: 1; }
+  .token-wrap { display: flex; align-items: center; gap: 4px; }
+  .token-wrap button { padding: 7px 9px; }
+  #lastUpdated { color: var(--muted); font-size: 12px; min-width: 118px; }
   input[type="password"], input[type="text"] {
     background: var(--panel); border: 1px solid var(--line); color: var(--text);
     border-radius: 8px; padding: 7px 10px; width: 190px;
@@ -82,8 +85,12 @@
 <header>
   <h1>AthenAI <span>Lead Core</span> — панель менеджера</h1>
   <div class="spacer"></div>
-  <input id="token" type="password" placeholder="X-Admin-Token" title="Админ-токен">
+  <div class="token-wrap">
+    <input id="token" type="password" placeholder="X-Admin-Token" title="Админ-токен">
+    <button id="toggleToken" title="Показать/скрыть токен">👁</button>
+  </div>
   <button id="refresh" class="primary">Обновить</button>
+  <span id="lastUpdated"></span>
   <label style="color:var(--muted);font-size:12px">
     <input type="checkbox" id="auto"> авто-обновление 5с
   </label>
@@ -131,7 +138,11 @@ function esc(text) {
 function time(iso) { return iso ? new Date(iso).toLocaleTimeString("ru-RU") : "—"; }
 
 async function api(path, options) {
-  const response = await fetch(path, { ...options, headers: headers() });
+  options = options || {};
+  const response = await fetch(path, {
+    ...options,
+    headers: { ...headers(), ...(options.headers || {}) },
+  });
   if (response.status === 401) { alert("Неверный админ-токен"); throw new Error("401"); }
   return response;
 }
@@ -250,12 +261,21 @@ async function openCase(id) {
 }
 
 async function act(kind) {
+  // Отклонение терминально: страхуемся от случайного клика.
+  if (kind === "reject" && !confirm("Точно отклонить этот лид? Действие необратимо.")) {
+    return;
+  }
   const id = $("#panel h2") && getCurrentCaseId();
   const url = kind === "send"
     ? "/cases/" + id + "/send/simulate"
     : "/cases/" + id + "/" + kind;
-  const body = kind === "reject" ? { reason: "Отклонено из дашборда" } : {};
-  const response = await api(url, { method: "POST", body: JSON.stringify(body) });
+  // approve и send идут без тела; reject несёт причину с правильным Content-Type.
+  const options = { method: "POST" };
+  if (kind === "reject") {
+    options.body = JSON.stringify({ reason: "Отклонено из дашборда" });
+    options.headers = { "Content-Type": "application/json" };
+  }
+  const response = await api(url, options);
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     alert("Отказано (" + response.status + "): " + JSON.stringify(data.detail || data));
@@ -277,17 +297,37 @@ function closePanel() {
   $("#panel").classList.remove("open");
 }
 $("#overlay").addEventListener("click", closePanel);
-$("#refresh").addEventListener("click", () => { loadAnalytics(); loadCases(); });
+
+$("#toggleToken").addEventListener("click", () => {
+  const field = $("#token");
+  const showing = field.type === "text";
+  field.type = showing ? "password" : "text";
+  $("#toggleToken").textContent = showing ? "👁" : "🙈";
+});
+
+async function refresh() {
+  const btn = $("#refresh");
+  btn.disabled = true;
+  btn.textContent = "Обновляю…";
+  try {
+    await Promise.all([loadAnalytics(), loadCases()]);
+    $("#lastUpdated").textContent =
+      "обновлено " + new Date().toLocaleTimeString("ru-RU");
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Обновить";
+  }
+}
+$("#refresh").addEventListener("click", refresh);
 
 let timer = null;
 $("#auto").addEventListener("change", (event) => {
   clearInterval(timer);
-  if (event.target.checked) timer = setInterval(() => { loadAnalytics(); loadCases(); }, 5000);
+  if (event.target.checked) timer = setInterval(refresh, 5000);
 });
 
 token();
-loadAnalytics();
-loadCases();
+refresh();
 </script>
 </body>
 </html>

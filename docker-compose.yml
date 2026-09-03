@@ -76,6 +76,10 @@ services:
     depends_on:
       db:
         condition: service_healthy
+      # Ждём и api: его healthcheck отвечает только после применения
+      # миграций — воркер не стартует раньше схемы.
+      api:
+        condition: service_healthy
 
   mock-crm:
     build: .

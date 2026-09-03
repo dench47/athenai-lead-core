@@ -148,6 +148,18 @@ def test_approval_requires_admin_token(client) -> None:
     assert response.status_code == 401
 
 
+def test_approve_with_empty_json_body(client) -> None:
+    """Регрессия: клиент с пустым JSON-объектом в теле и Content-Type
+    должен приниматься (ловушка дашборда без заголовка — отдельная история)."""
+    case_id = _create_and_process(client, update_id=8010)
+    response = client.post(
+        "/cases/" + case_id + "/approve",
+        headers={**_admin_headers(), "Content-Type": "application/json"},
+        content="{}",
+    )
+    assert response.status_code == 200
+
+
 def test_manual_review_case_can_be_approved_after_human_look(client) -> None:
     """Путь manual_review-с-черновиком: guardrail поймал нарушение,
     менеджер рассмотрел и одобрил — человек выше автопроверки."""
