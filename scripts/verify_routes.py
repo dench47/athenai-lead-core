@@ -156,7 +156,6 @@ def main() -> int:
             passed, note = check_duplicate(session, all_events, lead)
             results.append((lead_id + " (повтор)", "duplicate", passed, note))
 
-    failed = [row for row in results if not row[2]]
     for lead_id, category, passed, note in results:
         mark = "PASS" if passed else "FAIL"
         print(f"{mark}  {lead_id:<16} {category:<11} {note}")
@@ -166,7 +165,10 @@ def main() -> int:
     coverage = round(passed_count / total * 100, 1)
     print(f"\nМаршруты: {passed_count}/{total} ({coverage}%) | критерий задания: >= 85%")
     duplicates_ok = all(row[2] for row in results[total:])
-    print(f"Повторные доставки: {'все распознаны, дублей карточек нет' if duplicates_ok else 'ЕСТЬ ПРОБЛЕМЫ'}")
+    duplicates_verdict = (
+        "все распознаны, дублей карточек нет" if duplicates_ok else "ЕСТЬ ПРОБЛЕМЫ"
+    )
+    print("Повторные доставки: " + duplicates_verdict)
 
     if coverage < 85 or not duplicates_ok:
         print("ИТОГ: FAIL")
