@@ -12,6 +12,8 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.crm.client import CRMClient, build_default_client
+from app.crm.sync import sync_due_jobs
 from app.enums import CaseStatus, Urgency
 from app.guardrails import GUARDRAIL_CHECKS, check_draft
 from app.models import AuditLog, Draft, LeadCase, Qualification
@@ -41,12 +43,15 @@ def run_once(
     session: Session,
     provider: QualificationProvider | None = None,
     drafter: Drafter | None = None,
+    crm_client: CRMClient | None = None,
 ) -> dict[str, int]:
-    """Один проход конвейера: сначала квалификация, затем черновики."""
+    """Один проход конвейера: квалификация -> черновики -> синк с CRM."""
     if provider is None:
         provider = get_qualifier()
     if drafter is None:
         drafter = get_drafter()
+    if crm_client is None:
+        crm_client = build_default_client()
 
     stats = {
         "claimed": 0,
@@ -91,6 +96,9 @@ def run_once(
             log.exception("drafting_failed", case_id=str(case.id))
             continue
         stats[draft_outcome] += 1
+
+    # Фаза 3: идемпотентный синк одобренных кейсов с CRM.
+    stats.update(sync_due_jobs(session, crm_client))
     return stats
 
 
