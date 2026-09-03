@@ -8,7 +8,12 @@ LeadForQualification и обязаны вернуть QualificationResult, пр�
 
 from typing import Protocol
 
-from app.schemas import LeadForQualification, QualificationResult
+from app.schemas import (
+    DraftInput,
+    DraftResult,
+    LeadForQualification,
+    QualificationResult,
+)
 
 
 class QualificationInvalidError(Exception):
@@ -29,3 +34,11 @@ class QualificationProvider(Protocol):
     name: str
 
     def qualify(self, lead: LeadForQualification) -> QualificationResult: ...
+
+
+class Drafter(Protocol):
+    """Генератор черновика: тот же паттерн, что у квалификатора."""
+
+    name: str
+
+    def compose(self, draft_input: DraftInput) -> DraftResult: ...

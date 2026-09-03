@@ -118,3 +118,32 @@ class QualificationResult(StrictModel):
     reasons: list[str] = Field(min_length=1)
     confidence: float = Field(ge=0.0, le=1.0)
     manual_review: bool = False
+
+
+# --- Черновик ответа ---
+
+
+class DraftInput(StrictModel):
+    """Вход генератора черновика: квалификация + маскированный текст.
+
+    Как и в квалификации, PII сюда не попадает: черновик пишется по сути
+    обращения, а не по контакту.
+    """
+
+    source: LeadSource
+    need: str
+    urgency: Urgency
+    budget_explicit: bool
+    body_text_masked: str
+
+
+class DraftResult(StrictModel):
+    """Безопасный продающий черновик для менеджера.
+
+    Цены, скидки, сроки, гарантии и наличие запрещены guardrails —
+    генератор может предложить тон и вопросы, но не обязательства.
+    """
+
+    reply_text: str
+    clarifying_question: str
+    next_action: str

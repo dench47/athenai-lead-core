@@ -5,9 +5,9 @@ from sqlalchemy import select
 from app.config import get_settings
 from app.db import SessionLocal
 from app.enums import CaseStatus, Urgency
-from app.models import LeadCase, Qualification
+from app.models import Draft, LeadCase, Qualification
 from app.providers.base import ProviderUnavailableError
-from app.schemas import LeadForQualification, QualificationResult
+from app.schemas import DraftInput, DraftResult, LeadForQualification, QualificationResult
 from app.worker.pipeline import run_once
 
 
@@ -76,15 +76,15 @@ def test_pipeline_qualifies_new_case(client) -> None:
     with SessionLocal() as session:
         stats = run_once(session)
 
-    assert stats == {
-        "claimed": 1,
-        "qualified": 1,
-        "manual_review": 0,
-        "postponed": 0,
-        "errors": 0,
-    }
+    assert stats["claimed"] == 1
+    assert stats["qualified"] == 1
+    assert stats["drafted"] == 1
+    assert stats["manual_review"] == 0
+    assert stats["draft_manual_review"] == 0
+    assert stats["postponed"] == 0
+    assert stats["errors"] == 0
     case = _single_case()
-    assert case.status == CaseStatus.QUALIFIED
+    assert case.status == CaseStatus.AWAITING_APPROVAL
     assert case.follow_up_due_at is not None
 
     with SessionLocal() as session:
@@ -92,6 +92,11 @@ def test_pipeline_qualifies_new_case(client) -> None:
     assert len(rows) == 1
     assert rows[0].provider == "mock"
     assert rows[0].need == "Уборка помещений"
+
+    with SessionLocal() as session:
+        drafts = list(session.execute(select(Draft)).scalars())
+    assert len(drafts) == 1
+    assert drafts[0].guardrail_report["violations"] == []
 
 
 def test_stub_manual_provider_routes_to_manual_review(client) -> None:
@@ -146,3 +151,35 @@ def test_unavailable_provider_postpones_case(client) -> None:
     assert stats["postponed"] == 1
     case = _single_case()
     assert case.status == CaseStatus.NEW
+
+
+class _ViolatingDrafter:
+    """Имитация генератора, который втюхал цену и скидку в черновик."""
+
+    name = "stub-violating"
+
+    def compose(self, draft_input: DraftInput) -> DraftResult:
+        return DraftResult(
+            reply_text="Сделаем со скидкой 10%, цена 5000 руб за визит!",
+            clarifying_question="Когда начнём?",
+            next_action="Пообещать гарантию качества",
+        )
+
+
+def test_guardrail_violation_routes_case_to_manual_review(client) -> None:
+    """Обязательный сценарий: ИИ не называет цены/скидки — нарушение
+    уводит кейс на ручную проверку, черновик сохраняется как улика."""
+    _create_case_via_webhook(client, update_id=6006)
+    with SessionLocal() as session:
+        stats = run_once(session, drafter=_ViolatingDrafter())
+
+    assert stats["drafted"] == 0
+    assert stats["draft_manual_review"] == 1
+    case = _single_case()
+    assert case.status == CaseStatus.MANUAL_REVIEW
+    assert case.manual_review_reason.startswith("Guardrail")
+
+    with SessionLocal() as session:
+        drafts = list(session.execute(select(Draft)).scalars())
+    assert len(drafts) == 1
+    assert drafts[0].guardrail_report["violations"]

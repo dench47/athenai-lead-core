@@ -13,15 +13,18 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.enums import CaseStatus, Urgency
-from app.models import AuditLog, LeadCase, Qualification
+from app.guardrails import GUARDRAIL_CHECKS, check_draft
+from app.models import AuditLog, Draft, LeadCase, Qualification
 from app.pii import mask_text
 from app.providers import (
+    Drafter,
     ProviderUnavailableError,
     QualificationInvalidError,
     QualificationProvider,
+    get_drafter,
     get_qualifier,
 )
-from app.schemas import LeadForQualification, QualificationResult
+from app.schemas import DraftInput, DraftResult, LeadForQualification, QualificationResult
 
 log = structlog.get_logger("pipeline")
 
@@ -35,27 +38,29 @@ _FOLLOW_UP_BY_URGENCY = {
 
 
 def run_once(
-    session: Session, provider: QualificationProvider | None = None
+    session: Session,
+    provider: QualificationProvider | None = None,
+    drafter: Drafter | None = None,
 ) -> dict[str, int]:
-    """Один проход конвейера: забрать партию новых кейсов и оценить."""
+    """Один проход конвейера: сначала квалификация, затем черновики."""
     if provider is None:
         provider = get_qualifier()
+    if drafter is None:
+        drafter = get_drafter()
 
-    stats = {"claimed": 0, "qualified": 0, "manual_review": 0, "postponed": 0, "errors": 0}
-    cases = (
-        session.execute(
-            select(LeadCase)
-            .where(LeadCase.status == CaseStatus.NEW)
-            .order_by(LeadCase.received_at)
-            .limit(BATCH_SIZE)
-            .with_for_update(skip_locked=True)
-        )
-        .scalars()
-        .all()
-    )
-    stats["claimed"] = len(cases)
+    stats = {
+        "claimed": 0,
+        "qualified": 0,
+        "manual_review": 0,
+        "postponed": 0,
+        "errors": 0,
+        "drafted": 0,
+        "draft_manual_review": 0,
+    }
 
-    for case in cases:
+    # Фаза 1: оценка новых обращений.
+    for case in _claim_cases(session, CaseStatus.NEW):
+        stats["claimed"] += 1
         try:
             outcome = _qualify_case(session, case, provider)
         except ProviderUnavailableError:
@@ -70,7 +75,41 @@ def run_once(
             log.exception("qualification_failed", case_id=str(case.id))
             continue
         stats[outcome] += 1
+
+    # Фаза 2: черновики для оценённых кейсов.
+    for case in _claim_cases(session, CaseStatus.QUALIFIED):
+        try:
+            draft_outcome = _draft_case(session, case, drafter)
+        except ProviderUnavailableError:
+            session.rollback()
+            stats["postponed"] += 1
+            log.warning("drafting_postponed", case_id=str(case.id))
+            continue
+        except Exception:
+            session.rollback()
+            stats["errors"] += 1
+            log.exception("drafting_failed", case_id=str(case.id))
+            continue
+        stats[draft_outcome] += 1
     return stats
+
+
+def _claim_cases(session: Session, status: CaseStatus) -> list[LeadCase]:
+    """Забрать партию кейсов в заданном статусе.
+
+    FOR UPDATE SKIP LOCKED: параллельные воркеры не дерутся за одни кейсы.
+    """
+    return list(
+        session.execute(
+            select(LeadCase)
+            .where(LeadCase.status == status)
+            .order_by(LeadCase.received_at)
+            .limit(BATCH_SIZE)
+            .with_for_update(skip_locked=True)
+        )
+        .scalars()
+        .all()
+    )
 
 
 def _qualify_case(
@@ -168,3 +207,82 @@ def _qualification_row(
         confidence=result.confidence,
         manual_review=result.manual_review,
     )
+
+
+def _draft_case(session: Session, case: LeadCase, drafter: Drafter) -> str:
+    """Черновик для оценённого кейса + guardrails.
+
+    Возвращает 'drafted' или 'draft_manual_review'.
+    """
+    qualification = case.qualification
+    draft_input = DraftInput(
+        source=case.source,
+        need=qualification.need,
+        urgency=qualification.urgency,
+        budget_explicit=qualification.budget_explicit,
+        body_text_masked=mask_text(case.body_text),
+    )
+
+    try:
+        raw = drafter.compose(draft_input)
+        result = DraftResult.model_validate(raw.model_dump())
+    except (ValidationError, QualificationInvalidError) as exc:
+        case.status = CaseStatus.MANUAL_REVIEW
+        case.manual_review_reason = ("Генератор черновика: " + str(exc))[:1000]
+        session.add(
+            AuditLog(
+                case_id=case.id,
+                actor="drafter:" + drafter.name,
+                action="draft_invalid",
+                details={"detail": str(exc)[:500]},
+            )
+        )
+        session.commit()
+        return "draft_manual_review"
+
+    violations = check_draft(result)
+    session.add(
+        Draft(
+            case_id=case.id,
+            reply_text=result.reply_text,
+            clarifying_question=result.clarifying_question,
+            next_action=result.next_action,
+            guardrail_report={
+                "violations": violations,
+                "checks": list(GUARDRAIL_CHECKS),
+            },
+        )
+    )
+
+    if violations:
+        # Требование задания: ИИ не называет цены/скидки/сроки/гарантии.
+        # Нарушение — кейс человеку, черновик сохранён как улика.
+        case.status = CaseStatus.MANUAL_REVIEW
+        case.manual_review_reason = ("Guardrail: " + "; ".join(violations))[:1000]
+        session.add(
+            AuditLog(
+                case_id=case.id,
+                actor="drafter:" + drafter.name,
+                action="draft_guardrail_violation",
+                details={"violations": violations[:10]},
+            )
+        )
+        session.commit()
+        log.info("draft_guardrail_violation", case_id=str(case.id))
+        return "draft_manual_review"
+
+    case.status = CaseStatus.DRAFT_READY
+    session.commit()
+
+    case.status = CaseStatus.AWAITING_APPROVAL
+    session.add(
+        AuditLog(
+            case_id=case.id,
+            actor="drafter:" + drafter.name,
+            action="awaiting_approval",
+            details={"checks_passed": list(GUARDRAIL_CHECKS)},
+        )
+    )
+    session.commit()
+    log.info("draft_ready", case_id=str(case.id))
+    return "drafted"
