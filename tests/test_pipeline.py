@@ -6,7 +6,10 @@ from app.config import get_settings
 from app.db import SessionLocal
 from app.enums import CaseStatus, Urgency
 from app.models import Draft, LeadCase, Qualification
-from app.providers.base import ProviderUnavailableError
+from app.providers.base import (
+    ProviderUnavailableError,
+    QualificationInvalidError,
+)
 from app.schemas import DraftInput, DraftResult, LeadForQualification, QualificationResult
 from app.worker.pipeline import run_once
 
@@ -139,6 +142,28 @@ class _UnavailableStubProvider:
 
     def qualify(self, lead: LeadForQualification) -> QualificationResult:
         raise ProviderUnavailableError("DeepSeek недоступен")
+
+
+class _BrokenDrafter:
+    """Имитация генератора черновиков, вернувшего мусор вместо схемы."""
+
+    name = "stub-broken-drafter"
+
+    def compose(self, draft_input: DraftInput) -> DraftResult:
+        raise QualificationInvalidError("ответ не является JSON")
+
+
+def test_invalid_drafter_response_goes_to_manual_review(client) -> None:
+    """Обязательный сценарий (стадия черновика): невалидный ответ модели
+    переводит обращение в manual_review — и на этапе генерации тоже."""
+    _create_case_via_webhook(client, update_id=6007)
+    with SessionLocal() as session:
+        stats = run_once(session, drafter=_BrokenDrafter())
+
+    assert stats["draft_manual_review"] == 1
+    case = _single_case()
+    assert case.status == CaseStatus.MANUAL_REVIEW
+    assert "Генератор черновика" in case.manual_review_reason
 
 
 def test_unavailable_provider_postpones_case(client) -> None:

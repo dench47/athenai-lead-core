@@ -192,6 +192,29 @@ def test_recovery_after_unavailability_syncs_exactly_once(client) -> None:
     assert len(_crm_deals()) == 1
 
 
+def test_crm_unreachable_connection_error_is_retried(client) -> None:
+    """Обязательный сценарий: недоступность CRM (нет соединения вообще) —
+    задача перепланируется, кейс не теряется и в CRM ничего не создаётся."""
+    _prepare_case_via_webhook(client, update_id=7100)
+    _approve_single_case()
+
+    unreachable = CRMClient(
+        base_url="http://crm-definitely-down:8000",
+        token=get_settings().mock_crm_token,
+        max_attempts=2,
+        backoff_base=0.0,
+        backoff_max=0.0,
+        timeout_seconds=0.5,
+    )
+    with SessionLocal() as session:
+        stats = run_once(session, crm_client=unreachable)
+
+    assert stats["crm_retry_scheduled"] == 1
+    case = _single_case()
+    assert case.status == CaseStatus.APPROVED  # ждёт повторной попытки
+    assert len(_crm_deals()) == 0
+
+
 def test_persistent_failure_ends_in_dead_letter(client) -> None:
     """Обязательный сценарий: исчерпание попыток -> dead-letter, без дублей."""
     _prepare_case_via_webhook(client, update_id=7005)
