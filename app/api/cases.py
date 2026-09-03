@@ -5,56 +5,46 @@
 """
 
 import uuid
-from collections.abc import Iterator
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin
-from app.db import SessionLocal
-from app.models import AuditLog, LeadCase
+from app.api.deps import SessionDep, require_admin
+from app.models import AuditLog, LeadCase, Qualification
 from app.pii import mask_email, mask_phone, mask_text
 
 router = APIRouter(prefix="/cases", tags=["cases"])
 
 
-def _get_session() -> Iterator[Session]:
-    with SessionLocal() as session:
-        yield session
-
-
-SessionDep = Annotated[Session, Depends(_get_session)]
-
-
 @router.get("", dependencies=[Depends(require_admin)])
 def list_cases(session: SessionDep) -> list[dict]:
-    rows = (
-        session.execute(
-            select(LeadCase).order_by(LeadCase.created_at.desc()).limit(200)
+    rows = session.execute(
+        select(LeadCase, Qualification.quality_score)
+        .outerjoin(Qualification, Qualification.case_id == LeadCase.id)
+        .order_by(LeadCase.created_at.desc())
+        .limit(200)
+    ).all()
+    result = []
+    for c, quality_score in rows:
+        result.append(
+            {
+                "id": str(c.id),
+                "external_event_id": c.external_event_id,
+                "source": c.source.value,
+                "status": c.status.value,
+                "consent": c.consent_status.value,
+                "received_at": c.received_at.isoformat(),
+                "contact_name": c.contact_name,
+                "phone": mask_phone(c.phone),
+                "email": mask_email(c.email),
+                "quality_score": quality_score,
+                "manual_review_reason": c.manual_review_reason,
+                "follow_up_due_at": (
+                    c.follow_up_due_at.isoformat() if c.follow_up_due_at else None
+                ),
+            }
         )
-        .scalars()
-        .all()
-    )
-    return [
-        {
-            "id": str(c.id),
-            "external_event_id": c.external_event_id,
-            "source": c.source.value,
-            "status": c.status.value,
-            "consent": c.consent_status.value,
-            "received_at": c.received_at.isoformat(),
-            "contact_name": c.contact_name,
-            "phone": mask_phone(c.phone),
-            "email": mask_email(c.email),
-            "manual_review_reason": c.manual_review_reason,
-            "follow_up_due_at": (
-                c.follow_up_due_at.isoformat() if c.follow_up_due_at else None
-            ),
-        }
-        for c in rows
-    ]
+    return result
 
 
 @router.get("/{case_id}", dependencies=[Depends(require_admin)])

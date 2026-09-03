@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AthenAI Lead Core — панель менеджера</title>
+<style>
+  :root {
+    --bg: #0f1420; --panel: #171e2e; --card: #1c2438; --line: #2a3450;
+    --text: #e8ecf5; --muted: #8b96ad; --accent: #5b8cff; --ok: #34c98e;
+    --warn: #ffb454; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font: 14px/1.45 "Segoe UI", system-ui, sans-serif; padding: 20px;
+  }
+  header { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+  h1 { font-size: 18px; font-weight: 600; }
+  h1 span { color: var(--accent); }
+  .spacer { flex: 1; }
+  input[type="password"], input[type="text"] {
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 7px 10px; width: 190px;
+  }
+  button {
+    background: var(--panel); border: 1px solid var(--line); color: var(--text);
+    border-radius: 8px; padding: 7px 12px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { border-color: var(--accent); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { border-color: var(--bad); color: var(--bad); }
+  #stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 18px 0; }
+  .stat { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .stat b { display: block; font-size: 22px; margin-top: 2px; }
+  .stat small { color: var(--muted); }
+  .stat.alert b { color: var(--warn); }
+  #filters { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 12px; }
+  .chip {
+    background: transparent; border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 12px; font-size: 12px;
+  }
+  .chip.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  table { width: 100%; border-collapse: collapse; background: var(--panel); border-radius: 10px; overflow: hidden; }
+  th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; text-transform: uppercase; }
+  tr.row { cursor: pointer; }
+  tr.row:hover { background: var(--card); }
+  .badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 12px; }
+  .b-new{background:#33415c}.b-qualified{background:#2c4a68}.b-draft_ready{background:#2c5a6b}
+  .b-awaiting_approval{background:#6b5a2c}.b-approved{background:#2c6b4a}.b-crm_synced{background:#1f7a56}
+  .b-manual_review{background:#7a442c}.b-opt_out{background:#5c334f}.b-dead_letter{background:#7a2c3c}
+  .b-rejected{background:#4a4a55}
+  .src { font-size: 12px; color: var(--muted); }
+  .score { font-weight: 600; }
+  .overdue { color: var(--warn); }
+  /* Боковая панель кейса */
+  #overlay { position: fixed; inset: 0; background: rgba(5,8,15,.6); display: none; }
+  #panel {
+    position: fixed; top: 0; right: -560px; width: 540px; max-width: 95vw; height: 100%;
+    background: var(--panel); border-left: 1px solid var(--line); padding: 22px;
+    overflow-y: auto; transition: right .2s;
+  }
+  #panel.open { right: 0; }
+  #panel h2 { font-size: 16px; margin-bottom: 4px; }
+  #panel .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  .block { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; }
+  .block h3 { font-size: 12px; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .kv { display: grid; grid-template-columns: 130px 1fr; gap: 4px 10px; font-size: 13px; }
+  .kv span:nth-child(odd) { color: var(--muted); }
+  .draft-text { white-space: pre-wrap; background: var(--bg); border-radius: 8px; padding: 10px; }
+  .timeline { list-style: none; }
+  .timeline li { padding: 5px 0; border-bottom: 1px dashed var(--line); font-size: 12.5px; }
+  .timeline li:last-child { border: none; }
+  .timeline time { color: var(--muted); margin-right: 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 16px; flex-wrap: wrap; }
+  .viol { color: var(--bad); }
+  footer { margin-top: 14px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>AthenAI <span>Lead Core</span> — панель менеджера</h1>
+  <div class="spacer"></div>
+  <input id="token" type="password" placeholder="X-Admin-Token" title="Админ-токен">
+  <button id="refresh" class="primary">Обновить</button>
+  <label style="color:var(--muted);font-size:12px">
+    <input type="checkbox" id="auto"> авто-обновление 5с
+  </label>
+</header>
+
+<div id="stats"></div>
+<div id="filters"></div>
+<table>
+  <thead><tr>
+    <th>Получено</th><th>Источник</th><th>Клиент</th><th>Событие</th>
+    <th>Оценка</th><th>Статус</th><th>Follow-up</th>
+  </tr></thead>
+  <tbody id="rows"><tr><td colspan="7" style="color:var(--muted)">Загрузка…</td></tr></tbody>
+</table>
+<footer>
+  PII маскируется · внешние действия только после approve · все решения пишутся в audit_log
+</footer>
+
+<div id="overlay"></div>
+<div id="panel"></div>
+
+<script>
+"use strict";
+const STATUS_LABELS = {
+  new: "новый", qualified: "оценён", draft_ready: "черновик готов",
+  awaiting_approval: "ждёт одобрения", approved: "одобрен", crm_synced: "в CRM",
+  manual_review: "ручная проверка", opt_out: "отказ от связи",
+  dead_letter: "dead-letter", rejected: "отклонён",
+};
+const $ = (sel) => document.querySelector(sel);
+
+function token() {
+  const saved = localStorage.getItem("adminToken") || "dev-admin-token";
+  const input = $("#token");
+  input.value = saved;
+  input.addEventListener("change", () => localStorage.setItem("adminToken", input.value));
+  return input.value;
+}
+function headers() { return { "X-Admin-Token": token() }; }
+function esc(text) {
+  return String(text ?? "").replace(/[&<>"']/g, (ch) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[ch]));
+}
+function time(iso) { return iso ? new Date(iso).toLocaleTimeString("ru-RU") : "—"; }
+
+async function api(path, options) {
+  const response = await fetch(path, { ...options, headers: headers() });
+  if (response.status === 401) { alert("Неверный админ-токен"); throw new Error("401"); }
+  return response;
+}
+
+async function loadAnalytics() {
+  const response = await api("/analytics");
+  if (!response.ok) return;
+  const data = await response.json();
+  const card = (label, value, cls) =>
+    `<div class="stat ${cls || ""}"><small>${label}</small><b>${value ?? "—"}</b></div>`;
+  $("#stats").innerHTML =
+    card("Событий получено", data.events_received) +
+    card("Уникальных лидов", data.unique_leads) +
+    card("Из них дублей", data.duplicates) +
+    card("Прошли оценку", data.qualified) +
+    card("Ручная проверка", data.manual_review, data.manual_review ? "alert" : "") +
+    card("Ср. время до черновика, с", data.avg_time_to_draft_seconds) +
+    card("Просроченные follow-up", data.overdue_follow_ups, data.overdue_follow_ups ? "alert" : "") +
+    Object.entries(data.by_source).map(([src, count]) =>
+      card("Источник: " + src, count)).join("");
+}
+
+let allCases = [];
+let activeFilter = "all";
+
+async function loadCases() {
+  const response = await api("/cases");
+  if (!response.ok) return;
+  allCases = await response.json();
+  renderFilters();
+  renderRows();
+}
+
+function renderFilters() {
+  const statuses = [...new Set(allCases.map((c) => c.status))];
+  const chips = [`<button class="chip ${activeFilter === "all" ? "active" : ""}" data-f="all">все (${allCases.length})</button>`];
+  for (const status of statuses) {
+    const count = allCases.filter((c) => c.status === status).length;
+    chips.push(
+      `<button class="chip ${activeFilter === status ? "active" : ""}" data-f="${status}">` +
+      `${STATUS_LABELS[status] || status} (${count})</button>`);
+  }
+  $("#filters").innerHTML = chips.join("");
+  document.querySelectorAll(".chip").forEach((chip) =>
+    chip.addEventListener("click", () => { activeFilter = chip.dataset.f; renderFilters(); renderRows(); }));
+}
+
+function renderRows() {
+  const rows = allCases
+    .filter((c) => activeFilter === "all" || c.status === activeFilter)
+    .map((c) => {
+      const overdue = c.follow_up_due_at && new Date(c.follow_up_due_at) < new Date();
+      return `<tr class="row" data-id="${c.id}">
+        <td>${time(c.received_at)}</td>
+        <td class="src">${esc(c.source)}</td>
+        <td>${esc(c.contact_name || "—")}</td>
+        <td class="src">${esc(c.external_event_id)}</td>
+        <td class="score">${c.quality_score ?? "—"}</td>
+        <td><span class="badge b-${c.status}">${STATUS_LABELS[c.status] || c.status}</span></td>
+        <td class="${overdue ? "overdue" : ""}">${c.follow_up_due_at ? time(c.follow_up_due_at) : "—"}</td>
+      </tr>`;
+    });
+  $("#rows").innerHTML = rows.length
+    ? rows.join("")
+    : `<tr><td colspan="7" style="color:var(--muted)">Нет кейсов в этом фильтре</td></tr>`;
+  document.querySelectorAll("tr.row").forEach((row) =>
+    row.addEventListener("click", () => openCase(row.dataset.id)));
+}
+
+async function openCase(id) {
+  const response = await api("/cases/" + id);
+  if (!response.ok) return;
+  const c = await response.json();
+  const q = c.qualification, d = c.draft, s = c.crm_sync;
+  const violations = d && d.guardrail_report && d.guardrail_report.violations.length
+    ? `<div class="viol">Guardrails: ${esc(d.guardrail_report.violations.join("; "))}</div>` : "";
+  const canDecide = ["awaiting_approval", "manual_review"].includes(c.status);
+  const canSend = ["approved", "crm_synced"].includes(c.status);
+  $("#panel").innerHTML = `
+    <h2>${esc(c.contact_name || "Клиент")} <span class="badge b-${c.status}">${STATUS_LABELS[c.status]}</span></h2>
+    <div class="sub">${esc(c.source)} · ${esc(c.external_event_id)} · получено ${time(c.received_at)}</div>
+    <div class="block"><h3>Обращение (маскировано)</h3><div class="draft-text">${esc(c.body_text_masked)}</div></div>
+    ${q ? `<div class="block"><h3>Квалификация (${esc(q.provider)})</h3><div class="kv">
+      <span>Потребность</span><span>${esc(q.need)}</span>
+      <span>Срочность</span><span>${esc(q.urgency)}</span>
+      <span>Бюджет</span><span>${q.budget && q.budget_explicit ? q.budget + " (назван клиентом)" : "не назван"}</span>
+      <span>Оценка</span><span>${q.quality_score} / 100</span>
+      <span>Уверенность</span><span>${Math.round(q.confidence * 100)}%</span>
+      <span>Причины</span><span>${esc((q.reasons || []).join("; "))}</span>
+    </div></div>` : `<div class="block"><h3>Квалификация</h3>нет — кейс не проходил оценку</div>`}
+    ${d ? `<div class="block"><h3>Черновик ответа</h3>
+      <div class="draft-text">${esc(d.reply_text)}</div>
+      <div class="kv" style="margin-top:8px">
+        <span>Вопрос клиенту</span><span>${esc(d.clarifying_question)}</span>
+        <span>Действие</span><span>${esc(d.next_action)}</span>
+      </div>${violations}</div>` : ""}
+    ${s ? `<div class="block"><h3>CRM</h3><div class="kv">
+      <span>Синк</span><span>${esc(s.status)}</span>
+      <span>Попыток</span><span>${s.attempts}</span>
+      <span>Сделка</span><span>${esc(s.deal_ref || "—")}</span>
+      ${s.last_error ? `<span>Ошибка</span><span class="viol">${esc(s.last_error)}</span>` : ""}
+    </div></div>` : ""}
+    <div class="block"><h3>Журнал действий</h3><ul class="timeline">
+      ${(c.audit || []).map((entry) =>
+        `<li><time>${time(entry.at)}</time><b>${esc(entry.actor)}</b> · ${esc(entry.action)}</li>`).join("")
+        || "<li>пока пусто</li>"}
+    </ul></div>
+    <div class="actions">
+      ${canDecide ? `<button class="primary" onclick="act('approve')">Одобрить</button>
+        <button class="danger" onclick="act('reject')">Отклонить</button>` : ""}
+      ${canSend ? `<button class="primary" onclick="act('send')">Симулировать отправку</button>` : ""}
+      <button onclick="closePanel()">Закрыть</button>
+    </div>`;
+  $("#overlay").style.display = "block";
+  $("#panel").classList.add("open");
+}
+
+async function act(kind) {
+  const id = $("#panel h2") && getCurrentCaseId();
+  const url = kind === "send"
+    ? "/cases/" + id + "/send/simulate"
+    : "/cases/" + id + "/" + kind;
+  const body = kind === "reject" ? { reason: "Отклонено из дашборда" } : {};
+  const response = await api(url, { method: "POST", body: JSON.stringify(body) });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    alert("Отказано (" + response.status + "): " + JSON.stringify(data.detail || data));
+  } else if (data.would_send) {
+    alert("Симуляция отправки клиенту:\n\n" + data.would_send);
+  }
+  await loadAnalytics();
+  await loadCases();
+  closePanel();
+}
+
+let currentCaseId = null;
+const origOpen = openCase;
+openCase = async function (id) { currentCaseId = id; await origOpen(id); };
+function getCurrentCaseId() { return currentCaseId; }
+
+function closePanel() {
+  $("#overlay").style.display = "none";
+  $("#panel").classList.remove("open");
+}
+$("#overlay").addEventListener("click", closePanel);
+$("#refresh").addEventListener("click", () => { loadAnalytics(); loadCases(); });
+
+let timer = null;
+$("#auto").addEventListener("change", (event) => {
+  clearInterval(timer);
+  if (event.target.checked) timer = setInterval(() => { loadAnalytics(); loadCases(); }, 5000);
+});
+
+token();
+loadAnalytics();
+loadCases();
+</script>
+</body>
+</html>

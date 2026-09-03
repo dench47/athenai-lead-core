@@ -10,27 +10,16 @@
 """
 
 import uuid
-from collections.abc import Iterator
-from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.deps import require_admin
-from app.db import SessionLocal
+from app.api.deps import SessionDep, require_admin
 from app.enums import CaseStatus, SyncStatus
 from app.models import AuditLog, CrmSyncJob, LeadCase
 
 router = APIRouter(prefix="/cases", tags=["approval"])
-
-
-def _get_session() -> Iterator[Session]:
-    with SessionLocal() as session:
-        yield session
-
-
-SessionDep = Annotated[Session, Depends(_get_session)]
 
 
 class DecisionRequest(BaseModel):
