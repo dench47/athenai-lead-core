@@ -219,6 +219,8 @@ async function openCase(id) {
   const q = c.qualification, d = c.draft, s = c.crm_sync;
   const violations = d && d.guardrail_report && d.guardrail_report.violations.length
     ? `<div class="viol">Guardrails: ${esc(d.guardrail_report.violations.join("; "))}</div>` : "";
+  const hasDraft = !!(q && d);
+  const canApprove = c.status === "awaiting_approval" || (c.status === "manual_review" && hasDraft);
   const canDecide = ["awaiting_approval", "manual_review"].includes(c.status);
   const canSend = ["approved", "crm_synced"].includes(c.status);
   $("#panel").innerHTML = `
@@ -251,8 +253,8 @@ async function openCase(id) {
         || "<li>пока пусто</li>"}
     </ul></div>
     <div class="actions">
-      ${canDecide ? `<button class="primary" onclick="act('approve')">Одобрить</button>
-        <button class="danger" onclick="act('reject')">Отклонить</button>` : ""}
+      ${canApprove ? `<button class="primary" onclick="act('approve')">Одобрить</button>` : (c.status === "manual_review" ? `<span style="color:var(--muted);font-size:12px">Одобрить нельзя: черновика нет — кейс попал на ручную проверку до генерации ответа</span>` : "")}
+      ${canDecide ? `<button class="danger" onclick="act('reject')">Отклонить</button>` : ""}
       ${canSend ? `<button class="primary" onclick="act('send')">Симулировать отправку</button>` : ""}
       <button onclick="closePanel()">Закрыть</button>
     </div>`;
