@@ -31,6 +31,40 @@ _SOURCE_ADAPTERS: dict[LeadSource, tuple[type, object]] = {
     LeadSource.AVITO: (AvitoMessage, normalize_avito),
 }
 
+# Дедуп-констрейнт карточек и коды PostgreSQL: unique_violation. Дублем
+# считается только совпадение обоих — IntegrityError прилетает и за FK,
+# NOT NULL и чужие UNIQUE, их маскировать под дубль нельзя.
+_DEDUP_CONSTRAINT = "uq_lead_cases_external_event_id"
+_PG_UNIQUE_VIOLATION = "23505"
+
+
+def _pg_sqlstate(orig: object) -> str | None:
+    """SQLSTATE ошибки драйвера: psycopg2 зовёт pgcode, psycopg3 — sqlstate."""
+    for attr in ("pgcode", "sqlstate", "code"):
+        value = getattr(orig, attr, None)
+        if value:
+            return str(value)
+    return None
+
+
+def _is_dedup_violation(exc: IntegrityError) -> bool:
+    """True только если упал именно дедуп-констрейнт карточки.
+
+    Имя ограничения берём из диагностики драйвера (diag.constraint_name,
+    psycopg2/psycopg3); если диагностика недоступна, страхуемся поиском
+    имени в тексте: имя констрейнта уникально в схеме, в DETAIL чужого
+    нарушения оно не появляется.
+    """
+    orig = exc.orig if exc.orig is not None else exc
+    sqlstate = _pg_sqlstate(orig)
+    if sqlstate is not None and sqlstate != _PG_UNIQUE_VIOLATION:
+        return False
+    diag = getattr(orig, "diag", None)
+    constraint = getattr(diag, "constraint_name", None) if diag is not None else None
+    if constraint:
+        return constraint == _DEDUP_CONSTRAINT
+    return _DEDUP_CONSTRAINT in str(orig) or _DEDUP_CONSTRAINT in str(exc)
+
 
 @dataclass(slots=True)
 class IngestResult:
@@ -61,11 +95,28 @@ def ingest_raw_event(
 
     try:
         _journal(session, source, lead.external_event_id, raw, EventOutcome.ACCEPTED)
-    except IntegrityError:
-        # Карточка с таким (tenant_id, external_event_id) уже есть:
-        # повторная доставка, а не ошибка. Возврат не делаем — журнал
-        # восстанавливаем отдельной транзакцией ниже.
+    except IntegrityError as exc:
+        # Коммит flush'ит карточку и строку журнала вместе: IntegrityError
+        # здесь может прилететь за ЛЮБОЕ нарушение. Дублем признаём только
+        # падение дедуп-констрейнта карточки, остальное — ошибка приёма.
         session.rollback()
+        if not _is_dedup_violation(exc):
+            detail = "integrity: {} {}".format(
+                getattr(exc.orig, "pgcode", "?"), str(exc.orig)[:300]
+            )
+            try:
+                _journal(session, source, lead.external_event_id, raw,
+                         EventOutcome.INVALID, detail)
+            except Exception:
+                # Журнал ссылается на того же арендатора и может не
+                # записаться по той же причине: классификацию всё равно
+                # отдаём честную, провал журнала логируем отдельно.
+                session.rollback()
+                log.error("ingest_journal_failed", source=source.value, detail=detail)
+            log.error("event_integrity_error", source=source.value, detail=detail)
+            return IngestResult(EventOutcome.INVALID, detail=detail)
+        # Карточка с таким (tenant_id, external_event_id) уже есть:
+        # повторная доставка. Журнал восстанавливаем отдельной транзакцией.
         _journal(session, source, lead.external_event_id, raw, EventOutcome.DUPLICATE)
         log.info("event_duplicate", source=source.value,
                  external_event_id=lead.external_event_id)

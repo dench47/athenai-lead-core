@@ -136,3 +136,69 @@ def test_avito_event_accepted(client) -> None:
     assert response.json()["status"] == "accepted"
     case = _all_cases()[0]
     assert case.external_event_id == "avito-987654"
+
+
+def test_integrity_classifier_distinguishes_duplicates() -> None:
+    """Дубль = только unique_violation (23505) по дедуп-констрейнту карточки.
+
+    IntegrityError прилетает и за FK, NOT NULL и чужие UNIQUE — все они
+    обязаны классифицироваться НЕ дублем.
+    """
+    from sqlalchemy.exc import IntegrityError
+
+    from app.services.ingest import _DEDUP_CONSTRAINT, _is_dedup_violation
+
+    class _Diag:
+        def __init__(self, name: str) -> None:
+            self.constraint_name = name
+
+    class _Orig:
+        # code_attr имитирует драйвер: psycopg2 хранит код в pgcode,
+        # psycopg3 — в sqlstate
+        def __init__(self, pgcode, constraint: str | None, text: str = "",
+                     code_attr: str = "pgcode") -> None:
+            if pgcode is not None:
+                setattr(self, code_attr, pgcode)
+            self.diag = _Diag(constraint) if constraint else None
+            self._text = text
+
+        def __str__(self) -> str:  # pragma: no cover - тривиально
+            return self._text
+
+    def wrap(pgcode, constraint=None, text=""):
+        return IntegrityError("INSERT …", {}, _Orig(pgcode, constraint, text))
+
+    assert _is_dedup_violation(wrap("23505", _DEDUP_CONSTRAINT))
+    assert not _is_dedup_violation(wrap("23505", "uq_crm_sync_idempotency_key"))
+    assert not _is_dedup_violation(wrap("23503", "fk_lead_cases_tenant_id_tenants"))
+    assert not _is_dedup_violation(wrap(None))
+    # psycopg3: код в sqlstate, диагностики нет — узнаём по имени констрейнта
+    assert _is_dedup_violation(
+        IntegrityError("INSERT …", {}, _Orig("23505", None,
+                       text='duplicate key … CONSTRAINT "uq_lead_cases_external_event_id"',
+                       code_attr="sqlstate"))
+    )
+    assert _is_dedup_violation(
+        wrap("23505", None, text=f'duplicate key … CONSTRAINT "{_DEDUP_CONSTRAINT}"')
+    )
+
+
+def test_fk_violation_is_not_counted_as_duplicate(client, monkeypatch) -> None:
+    """Нарушение FK (несуществующий арендатор) — ошибка приёма, не дубль.
+
+    Подменяем DEFAULT_TENANT_ID на случайный uuid: вставка карточки падает
+    по fk_lead_cases_tenant_id_tenants. Ответ должен быть invalid, карточки
+    не появляется, дубликатор не срабатывает.
+    """
+    import uuid as uuid_lib
+
+    import app.services.ingest as ingest_module
+
+    monkeypatch.setattr(ingest_module, "DEFAULT_TENANT_ID", uuid_lib.uuid4())
+    response = client.post(
+        "/webhooks/telegram", json=_tg_payload(update_id=7001),
+        headers=_headers("telegram"),
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"]["status"] == "invalid"
+    assert _all_cases() == []
